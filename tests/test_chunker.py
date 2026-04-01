@@ -1,7 +1,7 @@
 ﻿import json
 
 from app.models.schemas import NormalizedDocument, NormalizedElement, NormalizedPage
-from app.rag.chunker import chunk_normalized_document, write_chunk_records
+from app.rag.chunker import chunk_normalized_document, load_chunk_records, write_chunk_records
 
 
 def test_chunker_generates_stable_chunk_ids_and_metadata(tmp_path):
@@ -52,3 +52,5 @@ def test_chunker_generates_stable_chunk_ids_and_metadata(tmp_path):
     assert output_path.exists()
     assert payload["chunk_id"] == "demo_doc_c0001"
     assert payload["doc_name"] == "demo.pdf"
+    loaded = load_chunk_records(output_path)
+    assert loaded[0].chunk_id == "demo_doc_c0001"

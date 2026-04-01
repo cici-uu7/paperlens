@@ -41,6 +41,7 @@ class Settings:
     data_dir: Path
     raw_docs_dir: Path
     parsed_docs_dir: Path
+    opendataloader_raw_dir: Path
     normalized_docs_dir: Path
     chunk_dir: Path
     index_dir: Path
@@ -48,6 +49,7 @@ class Settings:
     reports_dir: Path
     logs_dir: Path
     parser_backend: str
+    embedding_backend: str
     openai_api_key: str
     openai_base_url: str
     llm_model: str
@@ -71,6 +73,7 @@ class Settings:
             data_dir=data_dir,
             raw_docs_dir=data_dir / "raw_docs",
             parsed_docs_dir=data_dir / "parsed_docs",
+            opendataloader_raw_dir=data_dir / "parsed_docs" / "opendataloader_raw",
             normalized_docs_dir=data_dir / "parsed_docs" / "normalized",
             chunk_dir=data_dir / "chunks",
             index_dir=data_dir / "indexes",
@@ -78,6 +81,7 @@ class Settings:
             reports_dir=root / "reports",
             logs_dir=root / "logs",
             parser_backend=os.getenv("PARSER_BACKEND", "pymupdf"),
+            embedding_backend=os.getenv("EMBEDDING_BACKEND", "auto"),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             openai_base_url=os.getenv("OPENAI_BASE_URL", ""),
             llm_model=os.getenv("LLM_MODEL", os.getenv("OPENAI_MODEL", "")),
@@ -92,6 +96,7 @@ class Settings:
         return [
             self.raw_docs_dir,
             self.parsed_docs_dir,
+            self.opendataloader_raw_dir,
             self.normalized_docs_dir,
             self.chunk_dir,
             self.index_dir,
@@ -113,6 +118,7 @@ class Settings:
             "data_dir": str(self.data_dir),
             "raw_docs_dir": str(self.raw_docs_dir),
             "parsed_docs_dir": str(self.parsed_docs_dir),
+            "opendataloader_raw_dir": str(self.opendataloader_raw_dir),
             "normalized_docs_dir": str(self.normalized_docs_dir),
             "chunk_dir": str(self.chunk_dir),
             "index_dir": str(self.index_dir),
@@ -120,6 +126,7 @@ class Settings:
             "reports_dir": str(self.reports_dir),
             "logs_dir": str(self.logs_dir),
             "parser_backend": self.parser_backend,
+            "embedding_backend": self.embedding_backend,
             "openai_api_key": self.openai_api_key,
             "openai_base_url": self.openai_base_url,
             "llm_model": self.llm_model,

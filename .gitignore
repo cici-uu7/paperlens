@@ -3,6 +3,13 @@
 .autonomous/
 __pycache__/
 logs/
+.tmp/
+.tmp-browser-profile/
+.tmp-browser-profile-e2e/
+.tmp-browser-profile-gui/
+.tmp-browser-profile-gui-final/
+.tmp-edge-profile/
+*.pyc
 
 data/parsed_docs/
 data/chunks/
@@ -10,3 +17,5 @@ data/indexes/
 
 reports/doc_manifest_runtime.csv
 reports/normalized_preview/
+reports/streamlit*.log
+reports/streamlit*.err.log

@@ -29,6 +29,15 @@ def load_normalized_document(path: Path) -> NormalizedDocument:
     )
 
 
+def load_chunk_records(path: Path) -> List[ChunkRecord]:
+    records: List[ChunkRecord] = []
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                records.append(ChunkRecord(**json.loads(line)))
+    return records
+
+
 def _split_text(text: str, max_chars: int, overlap: int) -> List[str]:
     text = text.strip()
     if len(text) <= max_chars:
