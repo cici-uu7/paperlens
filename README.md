@@ -1,152 +1,185 @@
-﻿# PaperLens
+# PaperLens
 
-PaperLens is a local document QA demo built from the `.kiro` specs and the original planning READMEs in this repository. It turns the 10-paper PDF set under `data/raw_docs/` into a runnable retrieval + answer demo with FastAPI, Streamlit, citations, refusal handling, and a full 20-question evaluation runner.
+PaperLens 是一个本地可运行的论文文档问答 Demo。它把 `data/raw_docs/` 下的 PDF 论文解析为结构化文本，构建检索索引，并通过 FastAPI 和 Streamlit 提供带引用的问答能力。
 
-## Current Status
+当前仓库已经包含一套可直接演示的数据、索引、评测脚本和界面产物，适合继续做 RAG、文档理解和论文问答方向的实验。
 
-- Demo UI screenshot: `screenshots/paperlens-demo-ui.png`
-- Eval summary: `reports/eval_summary.md`
-- Eval details: `reports/eval_results.csv`
-- Eval run log: `reports/run_log.txt`
-- Current metrics from the latest full run:
-  - answered: `18 / 20`
-  - refused: `2 / 20`
-  - errors: `0 / 20`
-  - citation rate: `90.00%`
-  - expected doc hit rate: `100.00%`
+![PaperLens Demo](screenshots/paperlens-demo-ui.png)
 
-## Project Layout
+## 功能概览
 
-- `app/`: core runtime code
-- `ui/`: Streamlit demo UI
-- `scripts/`: build, smoke-test, and evaluation entry scripts
-- `data/raw_docs/`: source PDFs
-- `data/eval/questions.csv`: 20-question evaluation set
-- `reports/`: generated manifests, summaries, and evaluation artifacts
-- `screenshots/`: demo evidence images
-- `.autonomous/paperlens-demo/`: long-running task state and handoff notes
+- 扫描并管理本地 PDF 文档清单
+- 基于 PyMuPDF 解析 PDF，并统一输出标准化文档结构
+- 按章节和段落生成检索用 chunk
+- 构建本地向量索引并执行 Top-K 检索
+- 生成带文档名、页码和引用片段的回答
+- 支持无法回答分支，避免无依据编造
+- 提供 FastAPI 接口和 Streamlit 演示页面
+- 提供 20 题批量评测脚本和评测结果产物
+- 提供一键提交并推送到 GitHub 的同步脚本
 
-## Environment
+## 当前状态
 
-The repo is currently developed with the local virtual environment at `.venv`.
-Use `.venv\Scripts\python` for all project commands on Windows.
+- 文档规模：10 篇 PDF
+- 评测题目：20 题
+- 最新评测结果：
+  - Answered: `18 / 20`
+  - Refused: `2 / 20`
+  - Errors: `0 / 20`
+  - Citation rate: `90.00%`
+  - Expected doc hit rate: `100.00%`
+  - Answerability match rate: `100.00%`
 
-Typical setup:
+相关产物：
+
+- 界面截图：`screenshots/paperlens-demo-ui.png`
+- 评测摘要：`reports/eval_summary.md`
+- 评测明细：`reports/eval_results.csv`
+- 运行日志：`reports/run_log.txt`
+
+## 项目结构
+
+```text
+paperlens/
+├─ app/                  # 后端核心代码
+├─ data/                 # PDF、评测集、索引和中间产物
+├─ docs/                 # 项目文档与问题日志
+├─ reports/              # 评测摘要、运行结果、演示材料
+├─ screenshots/          # 界面截图
+├─ scripts/              # 构建、评测、同步脚本
+├─ tests/                # 单元测试与 smoke tests
+├─ ui/                   # Streamlit 界面
+├─ README.md
+└─ requirements.txt
+```
+
+## 环境准备
+
+建议在 Windows 下使用本地虚拟环境：
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-Optional extras for a richer runtime:
+可选增强依赖：
 
 ```powershell
 .\.venv\Scripts\python -m pip install faiss-cpu opendataloader-pdf
 ```
 
-## Build The Pipeline
+说明：
 
-1. Build the runtime manifest.
+- 默认流程不依赖 `faiss-cpu` 也能运行
+- 若安装了 `faiss-cpu`，后续可以切换到更接近生产形式的向量检索后端
+- 若安装了 `opendataloader-pdf`，可以启用更强的 PDF 解析路径
+
+## 快速开始
+
+### 1. 构建文档清单
 
 ```powershell
 .\.venv\Scripts\python scripts\build_manifest.py
 ```
 
-2. Build the retrieval index.
+### 2. 构建索引
 
 ```powershell
 .\.venv\Scripts\python scripts\build_index.py
 ```
 
-## Run QA Smoke Tests
+### 3. 运行问答 smoke test
 
 ```powershell
 .\.venv\Scripts\python scripts\run_qa_smoke.py --include-default-unanswerable
 ```
 
-## Run The API
+## 启动 API
 
 ```powershell
 .\.venv\Scripts\python -m uvicorn app.api.main:app --reload
 ```
 
-Available endpoints:
+接口：
 
 - `GET /health`
 - `GET /documents`
 - `POST /ask`
 
-## Run The Streamlit Demo
+## 启动 Streamlit 演示界面
 
 ```powershell
 .\.venv\Scripts\python -m streamlit run ui/app.py
 ```
 
-A demo-friendly autorun URL looks like this:
+演示地址示例：
 
 ```text
 http://127.0.0.1:8501/?question=LayoutLM%E5%9C%A8%E6%96%87%E6%A1%A3%E7%90%86%E8%A7%A3%E9%87%8C%E6%9C%80%E6%A0%B8%E5%BF%83%E7%9A%84%E5%BB%BA%E6%A8%A1%E5%AF%B9%E8%B1%A1%E6%98%AF%E4%BB%80%E4%B9%88%EF%BC%9F&autorun=1&mode=local&top_k=5
 ```
 
-## Run The Full Evaluation
+界面支持：
+
+- 自动模式、本地模式、API 模式
+- 引用列表展示
+- 无法回答提示
+- 演示自动运行参数
+
+## 运行完整评测
 
 ```powershell
 .\.venv\Scripts\python scripts\run_eval.py
 ```
 
-Outputs:
+输出文件：
 
 - `reports/eval_results.csv`
 - `reports/eval_summary.md`
 - `reports/run_log.txt`
 
-## Git Sync
+## 数据说明
 
-This repo includes a one-command GitHub sync helper for Windows:
+`data/` 目录已经包含可直接使用的演示数据：
+
+- `data/raw_docs/`：10 篇公开 PDF 论文
+- `data/eval/questions.csv`：20 题机器可读评测集
+- `data/eval/questions_answers_readable.md`：人工可读版问答
+- `data/eval/doc_manifest.csv`：论文元信息
+
+如果只想了解数据集内容，可以查看 [data/README.md](data/README.md)。
+
+## GitHub 同步
+
+仓库内置了一键同步脚本：
 
 ```powershell
-.\scripts\git_sync.ps1 -Message "feat: update demo"
+.\scripts\git_sync.ps1 -Message "docs: rewrite readme"
 ```
 
-Behavior:
+默认行为：
 
-- runs `pytest -q` by default if `.venv\Scripts\python.exe` exists
-- stages all tracked and untracked changes with `git add -A`
-- creates a commit with your message
-- pushes the current branch to `origin`
+- 自动 `git add -A`
+- 自动创建 commit
+- 若远程分支已前进，会先 `fetch + rebase`
+- 最后推送到 `origin`
 
-Useful flags:
+常用参数：
 
 ```powershell
-.\scripts\git_sync.ps1 -Message "docs: update readme" -SkipTests
+.\scripts\git_sync.ps1 -Message "docs: rewrite readme" -SkipTests
 .\scripts\git_sync.ps1 -Message "wip: local snapshot" -NoPush
 ```
 
-There is also a wrapper for double-click or `cmd.exe` usage:
+## 已知限制
 
-```powershell
-.\scripts\git_sync.cmd -Message "chore: sync repo"
-```
+- 当前默认索引后端仍是 JSON 向量存储，不是 FAISS
+- 未配置真实 LLM 凭证时，回答主要依赖 extractive fallback，答案风格更偏“证据抽取”
+- chunk 切分质量还有继续优化空间，复杂问题的回答稳定性仍能继续提升
 
-Notes:
+## 适合继续演进的方向
 
-- the first push may still require GitHub authentication on this machine
-- temporary browser profiles, `.autonomous/`, `.venv/`, and runtime index/chunk directories are ignored by `.gitignore`
-
-## Known Limits
-
-- The default `requirements.txt` intentionally keeps `faiss-cpu` and `opendataloader-pdf` optional because the current demo path can run without them.
-- The current runtime still uses the JSON vector-store fallback because `.venv` does not yet include `faiss`.
-- The answer service can run without LLM credentials, but the current fallback answer style is more extractive than a fully grounded generation model.
-- Chunk quality task `T018` is still open, so some harder multi-part questions may still inherit chunk-level noise.
-
-## Source Planning Docs
-
-These original planning docs remain in the repo and are still the source-of-truth background for the implementation order:
-
-- `PaperLens_README.md`
-- `PaperLens_Linux_README.md`
-- `PaperLens_OpenDataLoader_Integration.md`
-- `.kiro/specs/paperlens/requirements.md`
-- `.kiro/specs/paperlens/design.md`
-- `.kiro/specs/paperlens/tasks.md`
+- 接入更强的 embedding 或 reranker
+- 切换到 FAISS 检索后端
+- 优化表格、跨页和长文本切块
+- 接入真实 LLM 生成更自然的回答
+- 增加更多论文和更系统的评测集
