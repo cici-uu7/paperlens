@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+streamlit
+python-dotenv
+pymupdf
+pydantic>=2,<3
+numpy
+pandas
+faiss-cpu
+openai
+rank-bm25
+sentence-transformers
+tqdm
+opendataloader-pdf
+pytest

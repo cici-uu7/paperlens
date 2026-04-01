@@ -1,0 +1,11 @@
+filename,title,arxiv_id,source_url,focus,why_selected
+layoutlm_1912.13318.pdf,LayoutLM: Pre-training of Text and Layout for Document Image Understanding,1912.13318,https://arxiv.org/abs/1912.13318,document understanding,Foundational paper for text plus layout modeling on documents
+layoutlmv2_2012.14740.pdf,LayoutLMv2: Multi-modal Pre-training for Visually-Rich Document Understanding,2012.14740,https://arxiv.org/abs/2012.14740,document understanding,Adds stronger multimodal alignment across text image and layout
+layoutlmv3_2204.08387.pdf,LayoutLMv3: Pre-training for Document AI with Unified Text and Image Masking,2204.08387,https://arxiv.org/abs/2204.08387,document understanding,Useful for understanding unified masking and patch-based document modeling
+docformer_2106.11539.pdf,DocFormer: End-to-End Transformer for Document Understanding,2106.11539,https://arxiv.org/abs/2106.11539,document understanding,Shows an end-to-end transformer approach for text visual and spatial fusion
+donut_2111.15664.pdf,Donut: OCR-free Document Understanding Transformer,2111.15664,https://arxiv.org/abs/2111.15664,ocr free document AI,Important example of OCR-free document parsing and QA
+nougat_2308.13418.pdf,Nougat: Neural Optical Understanding for Academic Documents,2308.13418,https://arxiv.org/abs/2308.13418,scientific pdf parsing,Directly relevant to academic PDF ingestion in PaperLens
+docllm_2401.00908.pdf,DocLLM: A Layout-Aware Generative Language Model for Multimodal Document Understanding,2401.00908,https://arxiv.org/abs/2401.00908,generative document model,Good bridge between document layout modeling and LLM generation
+colpali_2407.01449.pdf,ColPali: Efficient Document Retrieval with Vision Language Models,2407.01449,https://arxiv.org/abs/2407.01449,visual retrieval,Directly relevant to multimodal retrieval for document RAG
+rag_2005.11401.pdf,Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks,2005.11401,https://arxiv.org/abs/2005.11401,rag basics,Classic retrieval plus generation paper for your RAG explanation layer
+self_rag_2310.11511.pdf,Self-RAG: Learning to Retrieve Generate and Critique through Self-Reflection,2310.11511,https://arxiv.org/abs/2310.11511,advanced rag,Useful for explaining adaptive retrieval and self-checking behavior

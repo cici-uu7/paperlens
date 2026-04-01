@@ -1,0 +1,12 @@
+.venv/
+.pytest_cache/
+.autonomous/
+__pycache__/
+logs/
+
+data/parsed_docs/
+data/chunks/
+data/indexes/
+
+reports/doc_manifest_runtime.csv
+reports/normalized_preview/
