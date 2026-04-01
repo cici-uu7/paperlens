@@ -148,7 +148,15 @@ class AnswerService:
         default_top_k = getattr(self.retriever, "default_top_k", self.settings.top_k)
         requested_top_k = top_k or default_top_k
         search_top_k = max(requested_top_k, default_top_k * 4)
-        chunks, retrieval = self.retriever.retrieve(question, top_k=search_top_k)
+        # Allow the answer layer to consider slightly weaker retrieval candidates.
+        # The fallback sentence selector still applies its own confidence filter,
+        # but this prevents larger merged chunks from being discarded too early.
+        search_score_threshold = min(self.settings.retrieval_score_threshold, 0.18)
+        chunks, retrieval = self.retriever.retrieve(
+            question,
+            top_k=search_top_k,
+            score_threshold=search_score_threshold,
+        )
         retrieval.top_k = requested_top_k
         if not chunks:
             return self._refusal_response(

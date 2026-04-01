@@ -85,10 +85,16 @@ python -m venv .venv
 ### 2. 构建索引
 
 ```powershell
+.\.venv\Scripts\python scripts\build_chunks.py
+```
+
+### 3. 构建索引
+
+```powershell
 .\.venv\Scripts\python scripts\build_index.py
 ```
 
-### 3. 运行问答 smoke test
+### 4. 运行问答 smoke test
 
 ```powershell
 .\.venv\Scripts\python scripts\run_qa_smoke.py --include-default-unanswerable

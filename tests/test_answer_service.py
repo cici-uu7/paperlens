@@ -11,8 +11,10 @@ class DummyRetriever:
     def __init__(self, chunks, metadata=None):
         self.chunks = chunks
         self.metadata = metadata or RetrievalMetadata(top_k=5, hit_count=len(chunks), latency_ms=3.5)
+        self.last_score_threshold = None
 
     def retrieve(self, query: str, top_k=None, score_threshold=None):
+        self.last_score_threshold = score_threshold
         return self.chunks, self.metadata
 
 
@@ -127,3 +129,28 @@ def test_answer_service_uses_llm_json_when_available(tmp_path):
     assert response.answerable is True
     assert response.answer == "LayoutLM jointly models text and layout."
     assert response.citations[0].chunk_id == "layoutlm_c0001"
+
+
+def test_answer_service_relaxes_retrieval_threshold(tmp_path):
+    settings = _build_settings(tmp_path)
+    retriever = DummyRetriever(
+        [
+            RetrievedChunk(
+                chunk_id="layoutlm_c0001",
+                doc_id="layoutlm",
+                doc_name="layoutlm_1912.13318.pdf",
+                page_start=1,
+                page_end=1,
+                section_title="Abstract",
+                element_types=["paragraph"],
+                score=0.21,
+                text="LayoutLM jointly models text and layout information for document understanding.",
+            )
+        ]
+    )
+    service = AnswerService(retriever=retriever, settings=settings)
+
+    response = service.answer_question("LayoutLM在文档理解里最核心的建模对象是什么？")
+
+    assert response.answerable is True
+    assert retriever.last_score_threshold == 0.18
