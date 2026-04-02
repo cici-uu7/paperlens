@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from app.core.config import get_settings
 from app.models.schemas import RetrievalMetadata
-from app.rag import AnswerService
+from app.rag import AnswerService, build_grounded_messages
 from app.rag.errors import LlmConfigurationError
 from app.rag.retriever import RetrievedChunk
 
@@ -17,6 +17,21 @@ class DummyRetriever:
     def retrieve(self, query: str, top_k=None, score_threshold=None):
         self.last_score_threshold = score_threshold
         return self.chunks, self.metadata
+
+
+class QueryAwareDummyRetriever:
+    def __init__(self, default_chunks, routes, metadata=None):
+        self.default_chunks = default_chunks
+        self.routes = routes
+        self.metadata = metadata or RetrievalMetadata(top_k=5, hit_count=len(default_chunks), latency_ms=3.5)
+        self.calls = []
+
+    def retrieve(self, query: str, top_k=None, score_threshold=None):
+        self.calls.append(query)
+        for needle, chunks in self.routes:
+            if needle in query:
+                return chunks, self.metadata
+        return self.default_chunks, self.metadata
 
 
 class DummyLlmClient:
@@ -149,6 +164,321 @@ def test_answer_service_uses_llm_json_when_available(tmp_path):
     assert llm_client.calls[0]["temperature"] == 0.1
     assert llm_client.calls[0]["max_tokens"] == 256
     assert len(llm_client.calls[0]["messages"]) == 2
+
+
+def test_build_grounded_messages_adds_direct_list_hint_for_enumeration_question():
+    chunks = [
+        RetrievedChunk(
+            chunk_id="layoutlmv2_c0007",
+            doc_id="layoutlmv2",
+            doc_name="layoutlmv2_2012.14740.pdf",
+            page_start=2,
+            page_end=2,
+            section_title="Introduction",
+            element_types=["paragraph"],
+            score=0.42,
+            text=(
+                "The first is the text-image alignment strategy Text-Image Alignment (TIA). "
+                "The second is the text-image matching strategy Text-Image Matching (TIM)."
+            ),
+        )
+    ]
+
+    messages = build_grounded_messages("LayoutLMv2新增的两个跨模态预训练任务是什么？", chunks)
+
+    assert "Start with the answer itself" in messages[0]["content"]
+    assert "numbered list" in messages[0]["content"]
+    assert "exactly 2 items" in messages[1]["content"]
+
+
+def test_build_grounded_messages_adds_direct_list_hint_for_utf8_chinese_enumeration_question():
+    question = "LayoutLMv2\u65b0\u589e\u7684\u4e24\u4e2a\u8de8\u6a21\u6001\u9884\u8bad\u7ec3\u4efb\u52a1\u662f\u4ec0\u4e48\uff1f"
+    chunks = [
+        RetrievedChunk(
+            chunk_id="layoutlmv2_c0007",
+            doc_id="layoutlmv2",
+            doc_name="layoutlmv2_2012.14740.pdf",
+            page_start=2,
+            page_end=2,
+            section_title="Introduction",
+            element_types=["paragraph"],
+            score=0.42,
+            text=(
+                "The first is the text-image alignment strategy Text-Image Alignment (TIA). "
+                "The second is the text-image matching strategy Text-Image Matching (TIM)."
+            ),
+        )
+    ]
+
+    messages = build_grounded_messages(question, chunks)
+
+    assert "Start with the answer itself" in messages[0]["content"]
+    assert "numbered list" in messages[0]["content"]
+    assert "exactly 2 items" in messages[1]["content"]
+
+
+def test_answer_service_augments_utf8_chinese_list_questions_with_item_focused_chunks(tmp_path):
+    question = "LayoutLMv2\u65b0\u589e\u7684\u4e24\u4e2a\u8de8\u6a21\u6001\u9884\u8bad\u7ec3\u4efb\u52a1\u662f\u4ec0\u4e48\uff1f"
+    settings = _build_settings(
+        tmp_path,
+        extra_lines=[
+            "LLM_MODEL=gpt-test",
+            "ANSWER_BACKEND=openai",
+            "LLM_MAX_CONTEXT_CHUNKS=2",
+        ],
+    )
+    default_chunks = [
+        RetrievedChunk(
+            chunk_id="layoutlmv2_generic",
+            doc_id="layoutlmv2",
+            doc_name="layoutlmv2_2012.14740.pdf",
+            page_start=1,
+            page_end=1,
+            section_title="Abstract",
+            element_types=["paragraph"],
+            score=0.61,
+            text=(
+                "LayoutLMv2 introduces new pre-training tasks for visually-rich document understanding, "
+                "including Text-Image Alignment and Text-Image Matching."
+            ),
+        ),
+    ]
+    retriever = QueryAwareDummyRetriever(
+        default_chunks=default_chunks,
+        routes=[
+            (
+                "Text-Image Alignment",
+                [
+                    RetrievedChunk(
+                        chunk_id="layoutlmv2_tia_focus",
+                        doc_id="layoutlmv2",
+                        doc_name="layoutlmv2_2012.14740.pdf",
+                        page_start=2,
+                        page_end=2,
+                        section_title="1 Introduction",
+                        element_types=["paragraph"],
+                        score=0.48,
+                        text=(
+                            "The first is Text-Image Alignment (TIA), a fine-grained cross-modality alignment task."
+                        ),
+                    )
+                ],
+            ),
+            (
+                "Text-Image Matching",
+                [
+                    RetrievedChunk(
+                        chunk_id="layoutlmv2_tim_focus",
+                        doc_id="layoutlmv2",
+                        doc_name="layoutlmv2_2012.14740.pdf",
+                        page_start=3,
+                        page_end=3,
+                        section_title="3 Experiments",
+                        element_types=["paragraph"],
+                        score=0.47,
+                        text=(
+                            "Text-Image Matching (TIM) is a coarse-grained cross-modality alignment task."
+                        ),
+                    )
+                ],
+            ),
+        ],
+    )
+    llm_client = DummyLlmClient(
+        '{"answerable": true, "answer": "1. Text-Image Alignment (TIA)\\n2. Text-Image Matching (TIM)", '
+        '"cited_chunk_ids": ["layoutlmv2_tia_focus", "layoutlmv2_tim_focus"], "failure_reason": null}'
+    )
+    service = AnswerService(retriever=retriever, settings=settings, llm_client=llm_client)
+
+    response = service.answer_question(question)
+    prompt = llm_client.calls[0]["messages"][1]["content"]
+
+    assert any("Text-Image Alignment" in call for call in retriever.calls[1:])
+    assert any("Text-Image Matching" in call for call in retriever.calls[1:])
+    assert "[layoutlmv2_tia_focus]" in prompt
+    assert "[layoutlmv2_tim_focus]" in prompt
+    assert response.answer == "1. Text-Image Alignment (TIA)\n2. Text-Image Matching (TIM)"
+    assert {citation.chunk_id for citation in response.citations[:2]} == {
+        "layoutlmv2_tia_focus",
+        "layoutlmv2_tim_focus",
+    }
+
+
+def test_answer_service_reranks_llm_context_for_enumeration_questions(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        extra_lines=[
+            "LLM_MODEL=gpt-test",
+            "ANSWER_BACKEND=openai",
+            "LLM_MAX_CONTEXT_CHUNKS=1",
+        ],
+    )
+    retriever = DummyRetriever(
+        [
+            RetrievedChunk(
+                chunk_id="layoutlmv2_generic",
+                doc_id="layoutlmv2",
+                doc_name="layoutlmv2_2012.14740.pdf",
+                page_start=2,
+                page_end=2,
+                section_title="2 Approach",
+                element_types=["heading", "paragraph"],
+                score=0.52,
+                text="In this section, we will introduce the multi-modal pre-training tasks of LayoutLMv2.",
+            ),
+            RetrievedChunk(
+                chunk_id="layoutlmv2_specific",
+                doc_id="layoutlmv2",
+                doc_name="layoutlmv2_2012.14740.pdf",
+                page_start=2,
+                page_end=2,
+                section_title="1 Introduction",
+                element_types=["paragraph"],
+                score=0.48,
+                text=(
+                    "For the pre-training strategies, we use two new training objectives. "
+                    "The first is Text-Image Alignment (TIA). The second is Text-Image Matching (TIM)."
+                ),
+            ),
+        ]
+    )
+    llm_client = DummyLlmClient(
+        '{"answerable": true, "answer": "1. Text-Image Alignment (TIA)\\n2. Text-Image Matching (TIM)", '
+        '"cited_chunk_ids": ["layoutlmv2_specific"], "failure_reason": null}'
+    )
+    service = AnswerService(retriever=retriever, settings=settings, llm_client=llm_client)
+
+    response = service.answer_question("What are the two new pre-training tasks in LayoutLMv2?")
+
+    prompt = llm_client.calls[0]["messages"][1]["content"]
+    assert response.answerable is True
+    assert "[layoutlmv2_specific]" in prompt
+    assert "[layoutlmv2_generic]" not in prompt
+
+
+def test_answer_service_reranks_citations_using_answer_content(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        extra_lines=[
+            "LLM_MODEL=gpt-test",
+            "ANSWER_BACKEND=openai",
+            "LLM_MAX_CONTEXT_CHUNKS=2",
+        ],
+    )
+    retriever = DummyRetriever(
+        [
+            RetrievedChunk(
+                chunk_id="layoutlmv2_generic",
+                doc_id="layoutlmv2",
+                doc_name="layoutlmv2_2012.14740.pdf",
+                page_start=2,
+                page_end=2,
+                section_title="2 Approach",
+                element_types=["heading", "paragraph"],
+                score=0.62,
+                text="In this section, we will introduce the multi-modal pre-training tasks of LayoutLMv2.",
+            ),
+            RetrievedChunk(
+                chunk_id="layoutlmv2_specific",
+                doc_id="layoutlmv2",
+                doc_name="layoutlmv2_2012.14740.pdf",
+                page_start=2,
+                page_end=2,
+                section_title="1 Introduction",
+                element_types=["paragraph"],
+                score=0.45,
+                text=(
+                    "For the pre-training strategies, we use two new training objectives. "
+                    "The first is Text-Image Alignment (TIA). The second is Text-Image Matching (TIM)."
+                ),
+            ),
+            RetrievedChunk(
+                chunk_id="layoutlmv2_tia",
+                doc_id="layoutlmv2",
+                doc_name="layoutlmv2_2012.14740.pdf",
+                page_start=4,
+                page_end=5,
+                section_title="Text-Image Alignment",
+                element_types=["paragraph"],
+                score=0.43,
+                text="Text-Image Alignment (TIA) is a fine-grained cross-modality alignment task.",
+            ),
+        ]
+    )
+    llm_client = DummyLlmClient(
+        '{"answerable": true, "answer": "根据检索到的文档内容，1. Text-Image Alignment (TIA)\\n2. Text-Image Matching (TIM)", '
+        '"cited_chunk_ids": ["layoutlmv2_generic"], "failure_reason": null}'
+    )
+    service = AnswerService(retriever=retriever, settings=settings, llm_client=llm_client)
+
+    response = service.answer_question("LayoutLMv2新增的两个跨模态预训练任务是什么？")
+
+    assert response.answer == "1. Text-Image Alignment (TIA)\n2. Text-Image Matching (TIM)"
+    assert response.citations[0].chunk_id == "layoutlmv2_specific"
+
+
+def test_answer_service_reranks_citations_for_utf8_chinese_enumeration_question(tmp_path):
+    question = "LayoutLMv2\u65b0\u589e\u7684\u4e24\u4e2a\u8de8\u6a21\u6001\u9884\u8bad\u7ec3\u4efb\u52a1\u662f\u4ec0\u4e48\uff1f"
+    settings = _build_settings(
+        tmp_path,
+        extra_lines=[
+            "LLM_MODEL=gpt-test",
+            "ANSWER_BACKEND=openai",
+            "LLM_MAX_CONTEXT_CHUNKS=2",
+        ],
+    )
+    retriever = DummyRetriever(
+        [
+            RetrievedChunk(
+                chunk_id="layoutlmv2_generic",
+                doc_id="layoutlmv2",
+                doc_name="layoutlmv2_2012.14740.pdf",
+                page_start=2,
+                page_end=2,
+                section_title="2 Approach",
+                element_types=["heading", "paragraph"],
+                score=0.62,
+                text="In this section, we will introduce the multi-modal pre-training tasks of LayoutLMv2.",
+            ),
+            RetrievedChunk(
+                chunk_id="layoutlmv2_specific",
+                doc_id="layoutlmv2",
+                doc_name="layoutlmv2_2012.14740.pdf",
+                page_start=2,
+                page_end=2,
+                section_title="1 Introduction",
+                element_types=["paragraph"],
+                score=0.45,
+                text=(
+                    "For the pre-training strategies, we use two new training objectives. "
+                    "The first is Text-Image Alignment (TIA). The second is Text-Image Matching (TIM)."
+                ),
+            ),
+            RetrievedChunk(
+                chunk_id="layoutlmv2_tia",
+                doc_id="layoutlmv2",
+                doc_name="layoutlmv2_2012.14740.pdf",
+                page_start=4,
+                page_end=5,
+                section_title="Text-Image Alignment",
+                element_types=["paragraph"],
+                score=0.43,
+                text="Text-Image Alignment (TIA) is a fine-grained cross-modality alignment task.",
+            ),
+        ]
+    )
+    llm_client = DummyLlmClient(
+        '{"answerable": true, "answer": "\\u6839\\u636e\\u68c0\\u7d22\\u5230\\u7684\\u6587\\u6863\\u5185\\u5bb9\\uff0c1. Text-Image Alignment (TIA)\\n2. Text-Image Matching (TIM)", '
+        '"cited_chunk_ids": ["layoutlmv2_generic"], "failure_reason": null}'
+    )
+    service = AnswerService(retriever=retriever, settings=settings, llm_client=llm_client)
+
+    response = service.answer_question(question)
+    prompt = llm_client.calls[0]["messages"][1]["content"]
+
+    assert "[layoutlmv2_specific]" in prompt
+    assert response.answer == "1. Text-Image Alignment (TIA)\n2. Text-Image Matching (TIM)"
+    assert response.citations[0].chunk_id == "layoutlmv2_specific"
 
 
 def test_answer_service_describe_backend_reports_auto_fallback(tmp_path):
