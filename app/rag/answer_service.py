@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover - depends on runtime environment
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s+|\n+")
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+_SUPPORTED_ANSWER_BACKENDS = {"auto", "openai", "extractive"}
 
 
 @dataclass
@@ -116,6 +117,85 @@ def build_grounded_messages(question: str, chunks: Sequence[RetrievedChunk]) -> 
     ]
 
 
+def _describe_answer_backend(
+    settings: Settings,
+    llm_client_supplied: bool = False,
+) -> Dict[str, Any]:
+    configured_backend = (settings.answer_backend or "auto").strip().lower() or "auto"
+
+    if configured_backend not in _SUPPORTED_ANSWER_BACKENDS:
+        return {
+            "configured_backend": configured_backend,
+            "active_backend": "misconfigured",
+            "llm_ready": False,
+            "llm_model": settings.llm_model,
+            "reason": "unsupported_answer_backend",
+            "message": (
+                f"Unsupported ANSWER_BACKEND '{settings.answer_backend}'. "
+                "Use one of: auto, openai, extractive."
+            ),
+        }
+
+    if configured_backend == "extractive":
+        return {
+            "configured_backend": configured_backend,
+            "active_backend": "extractive",
+            "llm_ready": False,
+            "llm_model": settings.llm_model,
+            "reason": "extractive_forced",
+            "message": "Extractive fallback is forced by ANSWER_BACKEND=extractive.",
+        }
+
+    if llm_client_supplied and settings.llm_model:
+        return {
+            "configured_backend": configured_backend,
+            "active_backend": "openai",
+            "llm_ready": True,
+            "llm_model": settings.llm_model,
+            "reason": "custom_client",
+            "message": f"Using a supplied LLM client with model '{settings.llm_model}'.",
+        }
+
+    if not settings.llm_model:
+        return {
+            "configured_backend": configured_backend,
+            "active_backend": "misconfigured" if configured_backend == "openai" else "extractive",
+            "llm_ready": False,
+            "llm_model": settings.llm_model,
+            "reason": "llm_model_missing",
+            "message": "LLM_MODEL is not configured, so PaperLens will use extractive fallback.",
+        }
+
+    if not settings.openai_api_key:
+        return {
+            "configured_backend": configured_backend,
+            "active_backend": "misconfigured" if configured_backend == "openai" else "extractive",
+            "llm_ready": False,
+            "llm_model": settings.llm_model,
+            "reason": "openai_api_key_missing",
+            "message": "OPENAI_API_KEY is missing, so PaperLens cannot call the LLM backend.",
+        }
+
+    if OpenAI is None:
+        return {
+            "configured_backend": configured_backend,
+            "active_backend": "misconfigured" if configured_backend == "openai" else "extractive",
+            "llm_ready": False,
+            "llm_model": settings.llm_model,
+            "reason": "openai_package_missing",
+            "message": "openai is not installed in the active environment.",
+        }
+
+    return {
+        "configured_backend": configured_backend,
+        "active_backend": "openai",
+        "llm_ready": True,
+        "llm_model": settings.llm_model,
+        "reason": "llm_ready",
+        "message": f"Using OpenAI-compatible LLM backend with model '{settings.llm_model}'.",
+    }
+
+
 class AnswerService:
     def __init__(
         self,
@@ -130,6 +210,7 @@ class AnswerService:
         self.max_citations = max_citations
         self.fallback_sentence_count = fallback_sentence_count
         self.llm_client = llm_client if llm_client is not None else self._build_llm_client(settings)
+        self.backend_status = self.describe_backend(settings, llm_client_supplied=llm_client is not None)
 
     @classmethod
     def from_settings(
@@ -143,6 +224,13 @@ class AnswerService:
             settings=settings,
             llm_client=llm_client,
         )
+
+    @staticmethod
+    def describe_backend(
+        settings: Settings,
+        llm_client_supplied: bool = False,
+    ) -> Dict[str, Any]:
+        return _describe_answer_backend(settings, llm_client_supplied=llm_client_supplied)
 
     def answer_question(self, question: str, top_k: Optional[int] = None) -> AskResponse:
         default_top_k = getattr(self.retriever, "default_top_k", self.settings.top_k)
@@ -195,7 +283,7 @@ class AnswerService:
         )
 
     def _generate_draft(self, question: str, chunks: Sequence[RetrievedChunk]) -> AnswerDraft:
-        if self.llm_client is not None and self.settings.llm_model:
+        if self.backend_status.get("active_backend") == "openai" and self.llm_client is not None:
             try:
                 return self._llm_draft(question, chunks)
             except AnswerGenerationError:
@@ -203,13 +291,17 @@ class AnswerService:
         return self._fallback_draft(question, chunks)
 
     def _llm_draft(self, question: str, chunks: Sequence[RetrievedChunk]) -> AnswerDraft:
-        messages = build_grounded_messages(question, chunks)
+        context_chunks = list(chunks[: max(self.settings.llm_max_context_chunks, 1)])
+        messages = build_grounded_messages(question, context_chunks)
         try:
-            response = self.llm_client.chat.completions.create(
-                model=self.settings.llm_model,
-                temperature=0.0,
-                messages=messages,
-            )
+            request_kwargs: Dict[str, Any] = {
+                "model": self.settings.llm_model,
+                "temperature": self.settings.llm_temperature,
+                "messages": messages,
+            }
+            if self.settings.llm_max_output_tokens > 0:
+                request_kwargs["max_tokens"] = self.settings.llm_max_output_tokens
+            response = self.llm_client.chat.completions.create(**request_kwargs)
         except Exception as exc:  # pragma: no cover - depends on runtime environment
             raise AnswerGenerationError(f"LLM answer generation failed: {exc}") from exc
 
@@ -219,7 +311,7 @@ class AnswerService:
             raise AnswerGenerationError("LLM response did not contain a valid message") from exc
 
         payload = self._parse_llm_payload(content)
-        valid_chunk_ids = {chunk.chunk_id for chunk in chunks}
+        valid_chunk_ids = {chunk.chunk_id for chunk in context_chunks}
         cited_chunk_ids = [
             chunk_id
             for chunk_id in payload.get("cited_chunk_ids", [])
@@ -383,12 +475,13 @@ class AnswerService:
 
     @staticmethod
     def _build_llm_client(settings: Settings) -> Optional[Any]:
-        if not settings.llm_model:
+        backend_status = _describe_answer_backend(settings)
+        if backend_status["configured_backend"] == "extractive":
             return None
-        if not settings.openai_api_key:
+        if backend_status["active_backend"] == "extractive":
             return None
-        if OpenAI is None:
-            raise LlmConfigurationError("openai is not installed in the active environment")
+        if backend_status["active_backend"] == "misconfigured":
+            raise LlmConfigurationError(backend_status["message"])
 
         client_kwargs: Dict[str, Any] = {"api_key": settings.openai_api_key}
         if settings.openai_base_url:

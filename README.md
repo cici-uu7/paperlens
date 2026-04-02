@@ -74,6 +74,33 @@ python -m venv .venv
 - 若安装了 `faiss-cpu`，后续可以切换到更接近生产形式的向量检索后端
 - 若安装了 `opendataloader-pdf`，可以启用更强的 PDF 解析路径
 
+## 真实 LLM 配置
+
+如果你希望 Demo 优先走真实 LLM 回答链路，可以在 `.env` 中配置：
+
+```env
+ANSWER_BACKEND=auto
+OPENAI_API_KEY=your-api-key
+OPENAI_BASE_URL=
+LLM_MODEL=your-model-id
+LLM_TEMPERATURE=0
+LLM_MAX_CONTEXT_CHUNKS=6
+LLM_MAX_OUTPUT_TOKENS=400
+```
+
+说明：
+
+- `ANSWER_BACKEND=auto`：有完整 LLM 配置时走真实模型，否则自动回退到 extractive fallback
+- `ANSWER_BACKEND=openai`：强制要求真实 LLM 配置完整；若缺少 API Key 或模型名，会直接报配置错误
+- `ANSWER_BACKEND=extractive`：始终使用本地抽取式回答
+- `OPENAI_BASE_URL` 可留空，也可填兼容 OpenAI API 的代理 / 网关地址
+
+可用下面的命令检查当前回答链路是否真的已经切到 LLM：
+
+```powershell
+.\.venv\Scripts\python scripts\run_qa_smoke.py --require-llm
+```
+
 ## 快速开始
 
 ### 1. 构建文档清单

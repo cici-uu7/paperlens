@@ -82,6 +82,7 @@ def test_health_endpoint_reports_status(tmp_path):
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["index_built"] is False
+    assert payload["answer_backend"]["active_backend"] == "extractive"
 
 
 def test_documents_endpoint_marks_indexed_documents(tmp_path):

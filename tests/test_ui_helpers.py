@@ -18,6 +18,7 @@ def test_build_local_snapshot_handles_missing_index(tmp_path):
     assert snapshot["health"]["index_built"] is False
     assert snapshot["documents"]["count"] == 0
     assert snapshot["indexed_count"] == 0
+    assert snapshot["health"]["answer_backend"]["active_backend"] == "extractive"
 
 
 def test_load_example_questions_reads_utf8_sig_csv(tmp_path):

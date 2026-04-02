@@ -59,10 +59,12 @@ def create_app(
     @app.get("/health")
     def health() -> Dict[str, Any]:
         indexed = (app.state.settings.index_dir / "build_info.json").exists()
+        answer_backend = AnswerService.describe_backend(app.state.settings)
         return {
             "status": "ok",
             "index_built": indexed,
             "raw_docs_dir": str(app.state.settings.raw_docs_dir),
+            "answer_backend": answer_backend,
         }
 
     @app.get("/documents")

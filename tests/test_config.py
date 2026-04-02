@@ -13,11 +13,15 @@ def test_settings_loads_env_and_builds_paths(tmp_path, monkeypatch):
                 "LLM_MODEL=gpt-test",
                 "EMBEDDING_MODEL=text-embedding-test",
                 "EMBEDDING_BACKEND=openai",
+                "ANSWER_BACKEND=openai",
                 "PARSER_BACKEND=opendataloader",
                 "TOP_K=7",
                 "CHUNK_MAX_CHARS=1600",
                 "CHUNK_OVERLAP=240",
                 "RETRIEVAL_SCORE_THRESHOLD=0.55",
+                "LLM_TEMPERATURE=0.2",
+                "LLM_MAX_CONTEXT_CHUNKS=8",
+                "LLM_MAX_OUTPUT_TOKENS=500",
             ]
         ),
         encoding="utf-8",
@@ -30,11 +34,15 @@ def test_settings_loads_env_and_builds_paths(tmp_path, monkeypatch):
         "OPENAI_MODEL",
         "EMBEDDING_MODEL",
         "EMBEDDING_BACKEND",
+        "ANSWER_BACKEND",
         "PARSER_BACKEND",
         "TOP_K",
         "CHUNK_MAX_CHARS",
         "CHUNK_OVERLAP",
         "RETRIEVAL_SCORE_THRESHOLD",
+        "LLM_TEMPERATURE",
+        "LLM_MAX_CONTEXT_CHUNKS",
+        "LLM_MAX_OUTPUT_TOKENS",
     ]:
         monkeypatch.delenv(name, raising=False)
 
@@ -47,12 +55,16 @@ def test_settings_loads_env_and_builds_paths(tmp_path, monkeypatch):
     assert settings.reports_dir == tmp_path / "reports"
     assert settings.parser_backend == "opendataloader"
     assert settings.embedding_backend == "openai"
+    assert settings.answer_backend == "openai"
     assert settings.llm_model == "gpt-test"
     assert settings.embedding_model == "text-embedding-test"
     assert settings.top_k == 7
     assert settings.chunk_max_chars == 1600
     assert settings.chunk_overlap == 240
     assert settings.retrieval_score_threshold == 0.55
+    assert settings.llm_temperature == 0.2
+    assert settings.llm_max_context_chunks == 8
+    assert settings.llm_max_output_tokens == 500
 
 
 def test_settings_can_create_runtime_directories(tmp_path):
@@ -65,3 +77,30 @@ def test_settings_can_create_runtime_directories(tmp_path):
     assert settings.index_dir in created
     assert all(path.exists() for path in created)
     assert Path(settings.logs_dir).exists()
+
+
+def test_settings_reset_known_env_keys_when_explicit_env_path_changes(tmp_path):
+    first_env = tmp_path / ".env.first"
+    second_env = tmp_path / ".env.second"
+    first_env.write_text(
+        "\n".join(
+            [
+                "ANSWER_BACKEND=openai",
+                "LLM_MODEL=gpt-test",
+                "OPENAI_API_KEY=test-key",
+                "LLM_TEMPERATURE=0.2",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    second_env.write_text("", encoding="utf-8")
+
+    first_settings = get_settings(project_root=tmp_path, env_path=first_env)
+    second_settings = get_settings(project_root=tmp_path, env_path=second_env)
+
+    assert first_settings.answer_backend == "openai"
+    assert first_settings.llm_model == "gpt-test"
+    assert second_settings.answer_backend == "auto"
+    assert second_settings.llm_model == ""
+    assert second_settings.openai_api_key == ""
+    assert second_settings.llm_temperature == 0.0

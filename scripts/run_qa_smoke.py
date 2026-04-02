@@ -37,6 +37,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Append one synthetic unanswerable question.",
     )
+    parser.add_argument(
+        "--require-llm",
+        action="store_true",
+        help="Fail fast if the configured answer backend is not ready to use a real LLM.",
+    )
     return parser.parse_args()
 
 
@@ -60,6 +65,25 @@ def _load_default_questions(settings, limit: int = 2) -> list[str]:
 def main() -> int:
     args = parse_args()
     settings = get_settings(project_root=PROJECT_ROOT)
+    backend_status = AnswerService.describe_backend(settings)
+    print(
+        "Answer backend: "
+        + backend_status.get("active_backend", "unknown")
+        + " | configured="
+        + backend_status.get("configured_backend", "unknown")
+        + " | model="
+        + str(backend_status.get("llm_model") or "(none)")
+    )
+    if backend_status.get("message"):
+        print("Backend note: " + str(backend_status["message"]))
+    print()
+
+    if args.require_llm and backend_status.get("active_backend") != "openai":
+        raise RuntimeError(
+            "Real LLM backend is not ready. "
+            + str(backend_status.get("message") or backend_status.get("reason") or "unknown reason")
+        )
+
     service = AnswerService.from_settings(settings)
 
     questions = list(args.question)

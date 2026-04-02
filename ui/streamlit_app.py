@@ -123,12 +123,14 @@ def build_local_snapshot(settings: Settings) -> Dict[str, Any]:
     build_info = load_local_build_info(settings)
     documents = load_local_documents(settings)
     indexed_count = sum(1 for doc in documents if doc["indexed"])
+    answer_backend = AnswerService.describe_backend(settings)
     return {
         "source": "local",
         "health": {
             "status": "ok",
             "index_built": bool(build_info),
             "raw_docs_dir": str(settings.raw_docs_dir),
+            "answer_backend": answer_backend,
         },
         "documents": {"count": len(documents), "documents": documents},
         "build_info": build_info,
@@ -359,6 +361,9 @@ def render_metrics(snapshot: Dict[str, Any]) -> None:
     documents = snapshot["documents"]
     build_info = snapshot.get("build_info", {})
     health = snapshot["health"]
+    answer_backend = health.get("answer_backend") or {}
+    backend_value = answer_backend.get("active_backend", "extractive")
+    backend_note = answer_backend.get("llm_model") or answer_backend.get("reason") or "fallback"
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -389,7 +394,7 @@ def render_metrics(snapshot: Dict[str, Any]) -> None:
             <div class="metric-card">
               <div class="metric-label">Index Backend</div>
               <div class="metric-value">{build_info.get('backend', 'missing')}</div>
-              <div class="metric-note">index_built={str(health.get('index_built', False)).lower()}</div>
+              <div class="metric-note">dim={build_info.get('vector_dim', 0)} | chunk_count={build_info.get('chunk_count', 0)}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -398,9 +403,9 @@ def render_metrics(snapshot: Dict[str, Any]) -> None:
         st.markdown(
             f"""
             <div class="metric-card">
-              <div class="metric-label">Vector Dim</div>
-              <div class="metric-value">{build_info.get('vector_dim', 0)}</div>
-              <div class="metric-note">chunk_count={build_info.get('chunk_count', 0)}</div>
+              <div class="metric-label">Answer Backend</div>
+              <div class="metric-value">{backend_value}</div>
+              <div class="metric-note">{backend_note}</div>
             </div>
             """,
             unsafe_allow_html=True,
