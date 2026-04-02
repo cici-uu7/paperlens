@@ -222,6 +222,7 @@ def parse_demo_query_params(params: Mapping[str, Any]) -> Dict[str, Any]:
     autorun_value = _normalize_query_value(params.get("autorun")).strip().lower()
     top_k_raw = _normalize_query_value(params.get("top_k")).strip()
     mode_raw = _normalize_query_value(params.get("mode")).strip().lower()
+    api_base_url = _normalize_query_value(params.get("api_base_url")).strip()
 
     mode_aliases = {
         UI_MODE_AUTO: UI_MODE_AUTO,
@@ -242,7 +243,46 @@ def parse_demo_query_params(params: Mapping[str, Any]) -> Dict[str, Any]:
         "autorun": autorun_value in {"1", "true", "yes", "y"},
         "top_k": top_k,
         "mode": mode_aliases.get(mode_raw, ""),
+        "api_base_url": api_base_url,
     }
+
+
+def format_answer_source(source: str) -> str:
+    normalized = (source or "").strip().lower()
+    mapping = {
+        "api": "API",
+        "local": "本地服务",
+    }
+    return mapping.get(normalized, (source or "未知来源").strip() or "未知来源")
+
+
+def format_citation_meta(citation: Mapping[str, Any]) -> str:
+    doc_name = str(citation.get("doc_name") or "-")
+    source_title = str(citation.get("source_title") or "未识别资料题目")
+    page_num = citation.get("page_num")
+    page_text = str(page_num if page_num not in (None, "") else "?")
+    score = citation.get("score")
+    score_text = f"{score:.3f}" if isinstance(score, (int, float)) else "-"
+    return (
+        f"PDF 文件名：{doc_name} | "
+        f"资料题目：{source_title} | "
+        f"第 {page_text} 页 | "
+        f"score：{score_text}"
+    )
+
+
+def build_citation_evidence_blocks(citation: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    quote_original = str(citation.get("quote_original") or citation.get("quote") or "").strip()
+    quote_translation = str(citation.get("quote_translation") or "").strip()
+    quote_language = str(citation.get("quote_language") or "").strip().lower()
+
+    evidence_blocks: List[Tuple[str, str]] = []
+    if quote_original:
+        label = "英文证据" if quote_language == "en" else "证据原文"
+        evidence_blocks.append((label, quote_original))
+    if quote_language == "en" and quote_translation:
+        evidence_blocks.append(("中文对照", quote_translation))
+    return evidence_blocks
 
 
 def render_style() -> None:
@@ -347,6 +387,19 @@ def render_style() -> None:
           font-size: 0.96rem;
           line-height: 1.6;
         }
+        .citation-label {
+          color: var(--paper-muted);
+          font-size: 0.78rem;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          margin-top: 0.6rem;
+          margin-bottom: 0.18rem;
+        }
+        .citation-translation {
+          border-top: 1px dashed rgba(29, 43, 42, 0.12);
+          margin-top: 0.7rem;
+          padding-top: 0.45rem;
+        }
         .soft-note {
           color: var(--paper-muted);
           font-size: 0.93rem;
@@ -433,11 +486,12 @@ def render_documents_table(documents: List[Dict[str, Any]]) -> None:
 
 
 def render_answer(response_payload: Dict[str, Any], source: str) -> None:
+    source_label = format_answer_source(source)
     if response_payload.get("answerable"):
         st.markdown(
             f"""
             <div class="answer-card">
-              <div class="answer-title">Answer Source: {html.escape(source.upper())}</div>
+              <div class="answer-title">回答来源：{html.escape(source_label)}</div>
               <div class="answer-body">{_escape_multiline_text(response_payload.get("answer", ""))}</div>
             </div>
             """,
@@ -448,7 +502,7 @@ def render_answer(response_payload: Dict[str, Any], source: str) -> None:
         st.markdown(
             f"""
             <div class="status-card">
-              <div class="answer-title">Refusal</div>
+              <div class="answer-title">当前结论</div>
               <div class="answer-body">{_escape_multiline_text(response_payload.get("answer", ""))}</div>
             </div>
             """,
@@ -457,15 +511,28 @@ def render_answer(response_payload: Dict[str, Any], source: str) -> None:
 
     citations = response_payload.get("citations", [])
     if citations:
-        st.subheader("引用列表")
+        st.subheader("引用证据")
         for citation in citations:
-            score = citation.get("score")
-            score_text = f" | score={score:.3f}" if isinstance(score, (int, float)) else ""
+            evidence_blocks = build_citation_evidence_blocks(citation)
+            evidence_html = "".join(
+                (
+                    f'<div class="citation-label">{html.escape(label)}</div>'
+                    f'<div class="citation-quote">{_escape_multiline_text(text)}</div>'
+                )
+                if index == 0
+                else (
+                    f'<div class="citation-translation">'
+                    f'<div class="citation-label">{html.escape(label)}</div>'
+                    f'<div class="citation-quote">{_escape_multiline_text(text)}</div>'
+                    f"</div>"
+                )
+                for index, (label, text) in enumerate(evidence_blocks)
+            )
             st.markdown(
                 f"""
                 <div class="citation-card">
-                  <div class="citation-meta">{html.escape(str(citation.get("doc_name", "")))} | p.{html.escape(str(citation.get("page_num", "?")))} | {html.escape(str(citation.get("chunk_id", "")))}{score_text}</div>
-                  <div class="citation-quote">{_escape_multiline_text(citation.get("quote", ""))}</div>
+                  <div class="citation-meta">{html.escape(format_citation_meta(citation))}</div>
+                  {evidence_html}
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -495,7 +562,8 @@ def main() -> None:
         mode_options = [UI_MODE_AUTO, UI_MODE_LOCAL, UI_MODE_API]
         initial_mode = query_config["mode"] if query_config["mode"] else UI_MODE_AUTO
         mode = st.selectbox("调用模式", mode_options, index=mode_options.index(initial_mode))
-        api_base_url = st.text_input("API Base URL", value=DEFAULT_API_BASE_URL)
+        default_api_base_url = query_config["api_base_url"] or DEFAULT_API_BASE_URL
+        api_base_url = st.text_input("API Base URL", value=default_api_base_url)
         slider_top_k = query_config["top_k"] if query_config["top_k"] else settings.top_k
         top_k = st.slider("Top-K", min_value=3, max_value=12, value=int(slider_top_k))
         st.caption("默认优先尝试 API；若 API 不可用，会自动回退到本地 AnswerService。")

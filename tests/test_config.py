@@ -79,6 +79,32 @@ def test_settings_can_create_runtime_directories(tmp_path):
     assert Path(settings.logs_dir).exists()
 
 
+def test_settings_normalizes_bare_openai_base_url_to_v1(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "\n".join(
+            [
+                "OPENAI_API_KEY=test-key",
+                "OPENAI_BASE_URL=https://example.invalid",
+                "LLM_MODEL=gpt-test",
+                "ANSWER_BACKEND=openai",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for name in [
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "LLM_MODEL",
+        "ANSWER_BACKEND",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+
+    settings = get_settings(project_root=tmp_path, env_path=env_path)
+
+    assert settings.openai_base_url == "https://example.invalid/v1"
+
+
 def test_settings_reset_known_env_keys_when_explicit_env_path_changes(tmp_path):
     first_env = tmp_path / ".env.first"
     second_env = tmp_path / ".env.second"

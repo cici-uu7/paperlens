@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 
@@ -45,6 +46,17 @@ def _get_float(name: str, default: float) -> float:
     if value is None or value == "":
         return default
     return float(value)
+
+
+def _normalize_openai_base_url(value: str) -> str:
+    normalized = (value or "").strip()
+    if not normalized:
+        return ""
+
+    parsed = urlsplit(normalized)
+    if parsed.scheme and parsed.netloc and parsed.path in {"", "/"}:
+        return urlunsplit((parsed.scheme, parsed.netloc, "/v1", parsed.query, parsed.fragment)).rstrip("/")
+    return normalized.rstrip("/")
 
 
 def load_environment(
@@ -117,7 +129,7 @@ class Settings:
             embedding_backend=os.getenv("EMBEDDING_BACKEND", "auto"),
             answer_backend=os.getenv("ANSWER_BACKEND", "auto"),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-            openai_base_url=os.getenv("OPENAI_BASE_URL", ""),
+            openai_base_url=_normalize_openai_base_url(os.getenv("OPENAI_BASE_URL", "")),
             llm_model=os.getenv("LLM_MODEL", os.getenv("OPENAI_MODEL", "")),
             embedding_model=os.getenv("EMBEDDING_MODEL", ""),
             top_k=_get_int("TOP_K", 5),

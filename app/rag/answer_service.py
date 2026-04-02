@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from app.core.config import Settings
 from app.models.schemas import AskResponse, Citation, RetrievalMetadata
@@ -1775,6 +1776,78 @@ def _split_sentences(text: str) -> List[str]:
     return [fallback] if fallback else []
 
 
+def _count_cjk_chars(text: str) -> int:
+    return sum(1 for character in text if "\u4e00" <= character <= "\u9fff")
+
+
+def _count_ascii_letters(text: str) -> int:
+    return sum(1 for character in text if character.isascii() and character.isalpha())
+
+
+def _detect_text_language(text: str) -> str:
+    normalized = text.strip()
+    if not normalized:
+        return ""
+
+    cjk_count = _count_cjk_chars(normalized)
+    ascii_letters = _count_ascii_letters(normalized)
+    if cjk_count >= max(2, ascii_letters // 4):
+        return "zh"
+    if cjk_count > 0:
+        return "mixed"
+    if ascii_letters >= 6:
+        return "en"
+    return "unknown"
+
+
+def _answer_needs_translation(question: str, answer: str) -> bool:
+    if not _contains_cjk(question):
+        return False
+
+    answer_language = _detect_text_language(answer)
+    if answer_language == "zh":
+        return False
+    if answer_language == "en":
+        return True
+
+    return _count_cjk_chars(answer) < max(2, len(answer) // 24)
+
+
+def _trim_quote(text: str, limit: int = 260) -> str:
+    normalized = _clean_sentence(text)
+    if len(normalized) <= limit:
+        return normalized
+
+    trimmed = normalized[:limit].rsplit(" ", 1)[0].strip()
+    if not trimmed:
+        trimmed = normalized[:limit].strip()
+    return trimmed.rstrip(" ,;:") + "..."
+
+
+def _load_source_title_map(settings: Settings) -> Dict[str, str]:
+    title_map: Dict[str, str] = {}
+    manifest_candidates = [
+        settings.reports_dir / "doc_manifest_runtime.csv",
+        settings.eval_dir / "doc_manifest.csv",
+    ]
+
+    for manifest_path in manifest_candidates:
+        if not manifest_path.exists():
+            continue
+        try:
+            with manifest_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    filename = (row.get("filename") or row.get("doc_name") or "").strip()
+                    title = (row.get("title") or row.get("source_title") or "").strip()
+                    if filename and title and filename not in title_map:
+                        title_map[filename] = title
+        except OSError:
+            continue
+
+    return title_map
+
+
 def build_grounded_messages(question: str, chunks: Sequence[RetrievedChunk]) -> List[Dict[str, str]]:
     context_blocks = []
     for chunk in chunks:
@@ -1899,8 +1972,68 @@ def _describe_answer_backend(
         "llm_ready": True,
         "llm_model": settings.llm_model,
         "reason": "llm_ready",
-        "message": f"Using OpenAI-compatible LLM backend with model '{settings.llm_model}'.",
+        "message": f"Configured OpenAI-compatible LLM backend with model '{settings.llm_model}'.",
     }
+
+
+def _coerce_llm_message_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts = [_coerce_llm_message_text(item) for item in value]
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(value, dict):
+        for key in ("text", "content", "value", "output_text"):
+            text = _coerce_llm_message_text(value.get(key))
+            if text:
+                return text
+        return ""
+    for attr in ("text", "content", "value", "output_text"):
+        if hasattr(value, attr):
+            text = _coerce_llm_message_text(getattr(value, attr))
+            if text:
+                return text
+    if hasattr(value, "model_dump"):
+        return _coerce_llm_message_text(value.model_dump())
+    return ""
+
+
+def _extract_llm_response_text(response: Any) -> str:
+    if isinstance(response, str):
+        return response.strip()
+
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+        if choices:
+            first_choice = choices[0]
+            message = first_choice.get("message") if isinstance(first_choice, dict) else None
+            text = _coerce_llm_message_text(message if message is not None else first_choice)
+            if text:
+                return text
+        text = _coerce_llm_message_text(response.get("output_text"))
+        if text:
+            return text
+
+    choices = getattr(response, "choices", None) or []
+    if choices:
+        first_choice = choices[0]
+        message = getattr(first_choice, "message", None)
+        text = _coerce_llm_message_text(message if message is not None else first_choice)
+        if text:
+            return text
+
+    text = _coerce_llm_message_text(getattr(response, "output_text", None))
+    if text:
+        return text
+
+    if hasattr(response, "model_dump"):
+        text = _extract_llm_response_text(response.model_dump())
+        if text:
+            return text
+
+    raise AnswerGenerationError("LLM response did not contain a valid message")
 
 
 class AnswerService:
@@ -1911,6 +2044,7 @@ class AnswerService:
         llm_client: Optional[Any] = None,
         max_citations: int = 3,
         fallback_sentence_count: int = 2,
+        text_translator: Optional[Callable[[str, str], str]] = None,
     ) -> None:
         self.retriever = retriever
         self.settings = settings
@@ -1918,6 +2052,14 @@ class AnswerService:
         self.fallback_sentence_count = fallback_sentence_count
         self.llm_client = llm_client if llm_client is not None else self._build_llm_client(settings)
         self.backend_status = self.describe_backend(settings, llm_client_supplied=llm_client is not None)
+        self.source_title_map = _load_source_title_map(settings)
+        self._translation_cache: Dict[Tuple[str, str], str] = {}
+        if text_translator is not None:
+            self.text_translator = text_translator
+        elif llm_client is None and self.backend_status.get("active_backend") == "openai":
+            self.text_translator = self._llm_translate_text
+        else:
+            self.text_translator = None
 
     @classmethod
     def from_settings(
@@ -1963,6 +2105,10 @@ class AnswerService:
 
         chunks = _augment_list_context_chunks_v2(self, question, chunks)
         draft = self._generate_draft(question, chunks)
+        if not draft.answerable and self.backend_status.get("active_backend") == "openai":
+            fallback_draft = self._fallback_draft(question, chunks)
+            if fallback_draft.answerable:
+                draft = fallback_draft
         if draft.answerable:
             citations = self._map_citations(question, draft.answer, chunks, draft.cited_chunk_ids)
             if not citations:
@@ -2015,7 +2161,9 @@ class AnswerService:
             raise AnswerGenerationError(f"LLM answer generation failed: {exc}") from exc
 
         try:
-            content = response.choices[0].message.content
+            content = _extract_llm_response_text(response)
+        except AnswerGenerationError:
+            raise
         except Exception as exc:  # pragma: no cover - depends on runtime environment
             raise AnswerGenerationError("LLM response did not contain a valid message") from exc
 
@@ -2046,6 +2194,8 @@ class AnswerService:
                 cited_chunk_ids = supporting_chunk_ids
         answerable = bool(payload.get("answerable", True))
         failure_reason = payload.get("failure_reason")
+        if answerable:
+            answer = self._localize_answer(question, answer)
 
         if answerable and not answer:
             raise AnswerGenerationError("LLM answer payload was empty")
@@ -2080,6 +2230,8 @@ class AnswerService:
             answer = "根据检索到的文档内容，相关证据显示：" + " ".join(answer_parts)
         else:
             answer = " ".join(answer_parts)
+
+        answer = self._localize_answer(question, answer)
 
         return AnswerDraft(
             answer=answer.strip(),
@@ -2275,11 +2427,94 @@ class AnswerService:
         for chunk in ranked_chunks:
             if chunk.chunk_id in seen:
                 continue
-            citations.append(chunk.to_citation())
+            quote_original = _trim_quote(chunk.text)
+            quote_language = _detect_text_language(quote_original)
+            quote_translation = ""
+            if quote_language == "en":
+                translated_quote = self._translate_text(quote_original, target_language="zh")
+                if translated_quote and translated_quote != quote_original:
+                    quote_translation = translated_quote
+            citations.append(
+                Citation(
+                    doc_name=chunk.doc_name,
+                    page_num=chunk.page_start,
+                    chunk_id=chunk.chunk_id,
+                    quote=quote_original,
+                    score=chunk.score,
+                    source_title=self.source_title_map.get(chunk.doc_name, ""),
+                    quote_original=quote_original,
+                    quote_translation=quote_translation,
+                    quote_language=quote_language,
+                )
+            )
             seen.add(chunk.chunk_id)
             if len(citations) >= self.max_citations:
                 break
         return citations
+
+    def _localize_answer(self, question: str, answer: str) -> str:
+        normalized = answer.strip()
+        if not normalized:
+            return normalized
+        if not _answer_needs_translation(question, normalized):
+            return normalized
+        translated = self._translate_text(normalized, target_language="zh")
+        return translated.strip() or normalized
+
+    def _translate_text(self, text: str, target_language: str = "zh") -> str:
+        normalized = text.strip()
+        if not normalized or self.text_translator is None:
+            return normalized
+
+        cache_key = (target_language, normalized)
+        cached = self._translation_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            translated = self.text_translator(normalized, target_language).strip()
+        except Exception:
+            return normalized
+
+        if translated.startswith('"') and translated.endswith('"'):
+            translated = translated[1:-1].strip()
+        if not translated:
+            return normalized
+
+        self._translation_cache[cache_key] = translated
+        return translated
+
+    def _llm_translate_text(self, text: str, target_language: str = "zh") -> str:
+        if self.llm_client is None or not self.settings.llm_model:
+            return text
+
+        target_label = "Simplified Chinese" if target_language == "zh" else target_language
+        request_kwargs: Dict[str, Any] = {
+            "model": self.settings.llm_model,
+            "temperature": 0.0,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a precise academic translator. "
+                        f"Translate the user's text into {target_label}. "
+                        "Preserve acronyms, numbering, citation markers, and technical meaning. "
+                        "Return only the translation."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+        }
+        if self.settings.llm_max_output_tokens > 0:
+            request_kwargs["max_tokens"] = min(max(self.settings.llm_max_output_tokens, 192), 512)
+
+        try:
+            response = self.llm_client.chat.completions.create(**request_kwargs)
+            translated = _extract_llm_response_text(response).strip()
+        except Exception:
+            return text
+
+        return translated or text
 
     def _rank_chunks_for_citations(
         self,
@@ -2386,6 +2621,11 @@ class AnswerService:
     @staticmethod
     def _parse_llm_payload(content: Any) -> Dict[str, Any]:
         text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+        if re.search(r"<!doctype html|<html\b", text[:512], re.IGNORECASE):
+            raise AnswerGenerationError(
+                "LLM endpoint returned HTML instead of JSON. Check OPENAI_BASE_URL; "
+                "for compatible gateways the API path usually needs to end with /v1."
+            )
         match = _JSON_OBJECT_RE.search(text)
         if not match:
             raise AnswerGenerationError("LLM response did not contain a JSON object")

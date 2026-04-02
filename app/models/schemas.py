@@ -1,4 +1,4 @@
-﻿"""Serializable schema objects used across the PaperLens pipeline."""
+"""Serializable schema objects used across the PaperLens pipeline."""
 
 from __future__ import annotations
 
@@ -65,6 +65,16 @@ class Citation(SchemaModel):
     chunk_id: str
     quote: str = ""
     score: Optional[float] = None
+    source_title: str = ""
+    quote_original: str = ""
+    quote_translation: str = ""
+    quote_language: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.quote_original and self.quote:
+            self.quote_original = self.quote
+        if not self.quote and self.quote_original:
+            self.quote = self.quote_original
 
 
 @dataclass

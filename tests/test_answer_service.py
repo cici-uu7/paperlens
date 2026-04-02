@@ -51,6 +51,21 @@ class DummyLlmClient:
         )
 
 
+class RawStringLlmClient:
+    def __init__(self, content: str):
+        self.calls = []
+
+        def _create(**kwargs):
+            self.calls.append(kwargs)
+            return content
+
+        self.chat = SimpleNamespace(
+            completions=SimpleNamespace(
+                create=_create
+            )
+        )
+
+
 def _build_settings(tmp_path, extra_lines=None):
     env_path = tmp_path / ".env"
     lines = list(extra_lines or [])
@@ -164,6 +179,149 @@ def test_answer_service_uses_llm_json_when_available(tmp_path):
     assert llm_client.calls[0]["temperature"] == 0.1
     assert llm_client.calls[0]["max_tokens"] == 256
     assert len(llm_client.calls[0]["messages"]) == 2
+
+
+def test_answer_service_localizes_chinese_answer_and_enriches_citations(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        extra_lines=[
+            "LLM_MODEL=gpt-test",
+            "ANSWER_BACKEND=openai",
+            "LLM_MAX_CONTEXT_CHUNKS=1",
+        ],
+    )
+    runtime_manifest = tmp_path / "reports" / "doc_manifest_runtime.csv"
+    runtime_manifest.parent.mkdir(parents=True, exist_ok=True)
+    runtime_manifest.write_text(
+        "\n".join(
+            [
+                "filename,title",
+                "rag_2005.11401.pdf,Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    retriever = DummyRetriever(
+        [
+            RetrievedChunk(
+                chunk_id="rag_c0001",
+                doc_id="rag",
+                doc_name="rag_2005.11401.pdf",
+                page_start=6,
+                page_end=6,
+                section_title="Introduction",
+                element_types=["paragraph"],
+                score=0.61,
+                text=(
+                    "RAG combines parametric memory in the generator with non-parametric memory "
+                    "stored in a retrievable document index."
+                ),
+            )
+        ]
+    )
+    llm_client = DummyLlmClient(
+        '{"answerable": true, "answer": "RAG combines parametric memory and non-parametric memory.", '
+        '"cited_chunk_ids": ["rag_c0001"], "failure_reason": null}'
+    )
+    translations = {
+        "RAG combines parametric memory and non-parametric memory.": "RAG 结合了参数记忆和非参数记忆。",
+        (
+            "RAG combines parametric memory in the generator with non-parametric memory "
+            "stored in a retrievable document index."
+        ): "RAG 将生成器中的参数记忆与可检索文档索引中的非参数记忆结合在一起。",
+    }
+
+    service = AnswerService(
+        retriever=retriever,
+        settings=settings,
+        llm_client=llm_client,
+        text_translator=lambda text, _: translations[text],
+    )
+
+    response = service.answer_question("RAG把哪两类记忆结合在一起？")
+
+    assert response.answer == "RAG 结合了参数记忆和非参数记忆。"
+    assert response.citations[0].source_title.startswith("Retrieval-Augmented Generation")
+    assert response.citations[0].quote_language == "en"
+    assert response.citations[0].quote_original.startswith("RAG combines parametric memory")
+    assert response.citations[0].quote_translation.startswith("RAG 将生成器中的参数记忆")
+
+
+def test_answer_service_accepts_raw_string_llm_payload(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        extra_lines=[
+            "LLM_MODEL=gpt-test",
+            "ANSWER_BACKEND=openai",
+            "LLM_MAX_CONTEXT_CHUNKS=1",
+        ],
+    )
+    retriever = DummyRetriever(
+        [
+            RetrievedChunk(
+                chunk_id="layoutlm_c0001",
+                doc_id="layoutlm",
+                doc_name="layoutlm_1912.13318.pdf",
+                page_start=1,
+                page_end=1,
+                section_title="Abstract",
+                element_types=["paragraph"],
+                score=0.52,
+                text="LayoutLM jointly models text and layout information for document understanding.",
+            )
+        ]
+    )
+    llm_client = RawStringLlmClient(
+        '{"answerable": true, "answer": "LayoutLM jointly models text and layout.", '
+        '"cited_chunk_ids": ["layoutlm_c0001"], "failure_reason": null}'
+    )
+    service = AnswerService(retriever=retriever, settings=settings, llm_client=llm_client)
+
+    response = service.answer_question("What does LayoutLM model?")
+
+    assert response.answerable is True
+    assert response.answer == "LayoutLM jointly models text and layout."
+    assert response.citations[0].chunk_id == "layoutlm_c0001"
+
+
+def test_answer_service_uses_fallback_when_llm_refuses_answerable_question(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        extra_lines=[
+            "LLM_MODEL=gpt-test",
+            "ANSWER_BACKEND=openai",
+            "LLM_MAX_CONTEXT_CHUNKS=1",
+        ],
+    )
+    retriever = DummyRetriever(
+        [
+            RetrievedChunk(
+                chunk_id="rag_c0001",
+                doc_id="rag",
+                doc_name="rag_2005.11401.pdf",
+                page_start=1,
+                page_end=1,
+                section_title="Introduction",
+                element_types=["paragraph"],
+                score=0.46,
+                text=(
+                    "RAG combines parametric memory in the generator with non-parametric memory "
+                    "stored in a retrievable document index."
+                ),
+            )
+        ]
+    )
+    llm_client = DummyLlmClient(
+        '{"answerable": false, "answer": "", "cited_chunk_ids": [], '
+        '"failure_reason": "insufficient_context"}'
+    )
+    service = AnswerService(retriever=retriever, settings=settings, llm_client=llm_client)
+
+    response = service.answer_question("What two kinds of memory does RAG combine?")
+
+    assert response.answerable is True
+    assert "parametric memory" in response.answer
+    assert response.citations[0].chunk_id == "rag_c0001"
 
 
 def test_build_grounded_messages_adds_direct_list_hint_for_enumeration_question():

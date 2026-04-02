@@ -10,11 +10,12 @@
 ## Current Snapshot
 
 - 10 source PDFs are indexed for retrieval.
-- The demo supports FastAPI plus Streamlit.
-- The Streamlit UI now supports autorun demo mode, refusal handling, and citation display.
-- The latest evaluation run completed all 20 questions with no runtime errors.
+- The repo still runs without any LLM credentials by falling back to the local extractive answer path.
+- The local runtime snapshot on 2026-04-02 uses an OpenAI-compatible backend via `.env` with model `gpt-5.4`.
+- Bare gateway origins are now normalized to `/v1`, so the local LLM path no longer falls through to an HTML landing page.
+- The demo supports FastAPI plus Streamlit, and both surfaces expose the configured answer backend in their runtime health state.
 
-## Metrics From The Latest Run
+## Metrics From The Latest Local LLM Run
 
 - answered: `18 / 20`
 - refused: `2 / 20`
@@ -22,9 +23,11 @@
 - citation rate: `90.00%`
 - expected doc hit rate: `100.00%`
 - answerability match rate: `100.00%`
+- avg latency: `4907.60 ms`
 
-## Notes For Final Packaging
+## Validation Notes
 
-- The current answer quality is usable for demo purposes, but still relies mainly on the extractive fallback path.
-- The remaining major technical debt before final polish is `T018`, the chunk-quality improvement task.
-- If real LLM credentials become available, rerun the smoke QA, UI demo, and full evaluation to refresh the artifacts.
+- Live smoke for `LayoutLMv2新增的两个跨模态预训练任务是什么？` now returns a clean two-item list: `Text-Image Alignment (TIA)` and `Text-Image Matching (TIM)`.
+- When the real LLM refuses a question despite strong retrieved evidence, PaperLens now falls back to the extractive rescue path instead of turning an answerable item into a false refusal.
+- The retrieval backend is still `json`, not `FAISS`, and some comparison/table questions still depend on retrieval-noise mitigation rather than a stronger index backend.
+- If this repo is moved to another machine, rerun `scripts/run_qa_smoke.py --require-llm --include-default-unanswerable` and `scripts/run_eval.py` after setting the local `.env`.

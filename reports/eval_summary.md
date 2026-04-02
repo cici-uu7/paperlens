@@ -13,7 +13,7 @@
 | Citation rate | 90.00% |
 | Expected doc hit rate | 100.00% |
 | Answerability match rate | 100.00% |
-| Avg latency (ms) | 98.39 |
+| Avg latency (ms) | 4907.60 |
 
 ## Review Queue
 

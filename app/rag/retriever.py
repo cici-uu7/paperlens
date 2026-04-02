@@ -40,11 +40,13 @@ class RetrievedChunk:
         )
 
     def to_citation(self, quote_chars: int = 220) -> Citation:
+        quote = self.text[:quote_chars].strip()
         return Citation(
             doc_name=self.doc_name,
             page_num=self.page_start,
             chunk_id=self.chunk_id,
-            quote=self.text[:quote_chars].strip(),
+            quote=quote,
+            quote_original=quote,
             score=self.score,
         )
 

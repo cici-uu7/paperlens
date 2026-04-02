@@ -1,4 +1,4 @@
-﻿from app.models.schemas import (
+from app.models.schemas import (
     AskResponse,
     ChunkRecord,
     Citation,
@@ -63,6 +63,9 @@ def test_chunk_and_answer_response_are_serializable():
                 chunk_id=chunk.chunk_id,
                 quote="jointly models text and layout",
                 score=0.91,
+                source_title="LayoutLM: Pre-training of Text and Layout for Document Image Understanding",
+                quote_translation="联合建模文本与版面信息",
+                quote_language="en",
             )
         ],
         retrieval=RetrievalMetadata(top_k=5, hit_count=1, latency_ms=12.5),
@@ -73,5 +76,8 @@ def test_chunk_and_answer_response_are_serializable():
 
     assert chunk_payload["char_count"] == len(chunk.text)
     assert response_payload["citations"][0]["chunk_id"] == "layoutlm_c0001"
+    assert response_payload["citations"][0]["source_title"].startswith("LayoutLM")
+    assert response_payload["citations"][0]["quote_original"] == "jointly models text and layout"
+    assert response_payload["citations"][0]["quote_translation"] == "联合建模文本与版面信息"
     assert response_payload["retrieval"]["top_k"] == 5
     assert response_payload["answerable"] is True

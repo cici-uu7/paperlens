@@ -22,13 +22,19 @@ PaperLens 是一个本地可运行的论文文档问答 Demo。它把 `data/raw_
 
 - 文档规模：10 篇 PDF
 - 评测题目：20 题
-- 最新评测结果：
+- 最新本地评测结果（2026-04-02，当前工作站 `.env` 已接入真实 LLM）：
   - Answered: `18 / 20`
   - Refused: `2 / 20`
   - Errors: `0 / 20`
   - Citation rate: `90.00%`
   - Expected doc hit rate: `100.00%`
   - Answerability match rate: `100.00%`
+  - Avg latency: `4907.60 ms`
+
+运行模式说明：
+
+- 仓库默认能力仍然是“无凭证也可运行 Demo”：如果没有 `OPENAI_API_KEY` / `LLM_MODEL`，PaperLens 会自动回退到 extractive fallback
+- 当前这台开发机在 `2026-04-02` 的本地 `.env` 已配置 OpenAI-compatible 网关与 `gpt-5.4`，所以本仓库里的最新 smoke / eval 产物已经反映真实 LLM 优先、extractive rescue 兜底的运行方式
 
 相关产物：
 
@@ -94,6 +100,7 @@ LLM_MAX_OUTPUT_TOKENS=400
 - `ANSWER_BACKEND=openai`：强制要求真实 LLM 配置完整；若缺少 API Key 或模型名，会直接报配置错误
 - `ANSWER_BACKEND=extractive`：始终使用本地抽取式回答
 - `OPENAI_BASE_URL` 可留空，也可填兼容 OpenAI API 的代理 / 网关地址
+- 如果 `OPENAI_BASE_URL` 只填了裸域名或根路径（例如 `https://example.com`），PaperLens 会自动规范为 `https://example.com/v1`；已经带自定义路径的网关地址会原样保留
 
 可用下面的命令检查当前回答链路是否真的已经切到 LLM：
 
@@ -145,6 +152,56 @@ LLM_MAX_OUTPUT_TOKENS=400
 - `GET /health`
 - `GET /documents`
 - `POST /ask`
+
+## 一键启动 API + UI
+
+Windows 下可以直接使用仓库内置脚本，一次拉起 API 和 Streamlit，并自动用 Chrome 打开页面：
+
+```powershell
+.\scripts\start_demo.ps1
+```
+
+如果更习惯双击，可直接运行：
+
+```text
+scripts\start_demo.cmd
+```
+
+默认行为：
+- 启动 `uvicorn`（`http://127.0.0.1:8000`）
+- 启动 Streamlit（`http://127.0.0.1:8501/`）
+- 打开 `?mode=api` 页面，并自动把 UI 的 API 地址指向当前启动的端口
+- 如果目标 `API` 端口上已经是可复用的 PaperLens 服务，脚本会直接复用现有 API，只补起缺失的 UI
+
+常用参数：
+
+```powershell
+.\scripts\start_demo.ps1 -NoBrowser
+.\scripts\start_demo.ps1 -ApiPort 8001 -UiPort 8502
+.\scripts\start_demo.ps1 -UiMode auto
+.\scripts\start_demo.ps1 -DryRun
+```
+
+## 一键停止 API + UI
+
+如果是通过一键启动脚本拉起的演示服务，可以直接使用配套停止脚本：
+
+```powershell
+.\scripts\stop_demo.ps1
+```
+
+如果更习惯双击，可直接运行：
+
+```text
+scripts\stop_demo.cmd
+```
+
+常用参数：
+
+```powershell
+.\scripts\stop_demo.ps1 -DryRun
+.\scripts\stop_demo.ps1 -ApiPort 8001 -UiPort 8502
+```
 
 ## 启动 Streamlit 演示界面
 
