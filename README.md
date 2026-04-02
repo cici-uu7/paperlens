@@ -82,6 +82,13 @@ python -m venv .venv
 .\.venv\Scripts\python scripts\build_manifest.py
 ```
 
+输出：
+
+- `reports/doc_manifest_runtime.csv`
+- `logs/manifest_scan.jsonl`
+
+如果遇到坏文件或环境缺依赖，manifest 现在会保留显式 `status` / `error_code`，并把扫描过程写入日志，方便排查。
+
 ### 2. 构建索引
 
 ```powershell
