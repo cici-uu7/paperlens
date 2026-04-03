@@ -1,5 +1,13 @@
 ﻿# 项目问题日志
 
+## 2026-04-03
+
+### [fixed][P2][resolved] Codex 会话恢复脚本现支持“一次恢复所有其他 provider”的历史
+- Problem: 当前本机 `G:\python_code\paperlens` 的本地 session 同时存在 `custom`、`openai`、`OpenAI` 三种 provider 标签，但 `scripts/clone_codex_sessions.py` 与 `scripts/restore_codex_sessions_by_dirs.ps1` 只能一次处理一个精确 `source_provider`，导致“恢复其他供应商历史”需要手工反复运行，而且会漏掉 `OpenAI -> openai` 这类大小写不同的记录。
+- Action: 在 `scripts/clone_codex_sessions.py` 中新增 `--other-providers` 选择器，把“除目标 provider 外的所有 provider”都纳入恢复；同步在 `scripts/restore_codex_sessions_by_dirs.ps1` 中新增 `-OtherProviders`；补充 `tests/test_clone_codex_sessions.py` 与 `README.md` 使用说明。
+- Validation: `& .\.venv\Scripts\python.exe -m pytest tests/test_clone_codex_sessions.py -q` 通过 `3 passed`；`python scripts\clone_codex_sessions.py --cwd G:\python_code\paperlens --other-providers --target-provider openai --dry-run` 首次显示 `matched=9 new=8 existing=1`；随后实际执行 `powershell -ExecutionPolicy Bypass -File scripts\restore_codex_sessions_by_dirs.ps1 G:\python_code\paperlens -OtherProviders -TargetProvider openai` 已写入 8 条新 `openai` clone；再次 dry-run 显示 `new=0 existing=9`，说明恢复已补齐且可重复执行不再重复落盘。
+- Impact: 现在针对同一工作目录恢复历史时，不需要先猜 provider 标签或手工分多轮执行；当前 `paperlens` 工作目录下的 `custom / OpenAI` 历史都已经有对应的 `openai` 可恢复会话。
+
 ## 2026-04-02
 
 ### [decision][P2][accepted] `AGENTS.md` 现已升级为贴合 PaperLens 的项目级执行规范

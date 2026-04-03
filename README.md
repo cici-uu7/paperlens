@@ -267,6 +267,26 @@ http://127.0.0.1:8501/?question=LayoutLM%E5%9C%A8%E6%96%87%E6%A1%A3%E7%90%86%E8%
 .\scripts\git_sync.ps1 -Message "wip: local snapshot" -NoPush
 ```
 
+## 恢复 Codex 会话历史
+
+如果同一个工作目录的本地 Codex 历史被分散在 `custom`、`OpenAI` 等不同 provider 标签下，可以把它们统一补成 `openai` 可恢复会话：
+
+```powershell
+.\scripts\restore_codex_sessions_by_dirs.ps1 . -OtherProviders -TargetProvider openai
+```
+
+先预览但不落盘：
+
+```powershell
+.\scripts\restore_codex_sessions_by_dirs.ps1 . -OtherProviders -TargetProvider openai -DryRun
+```
+
+说明：
+
+- `-OtherProviders` 会恢复所有“非目标 provider”的历史，而不是只看默认的 `custom`
+- 不带 `-OtherProviders` 时，脚本仍保持原来的 `custom -> openai` 默认行为
+- 底层 Python 脚本也支持直接调用：`python scripts\clone_codex_sessions.py --cwd . --other-providers --target-provider openai`
+
 ## 已知限制
 
 - 当前默认索引后端仍是 JSON 向量存储，不是 FAISS

@@ -47,13 +47,25 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--source-provider",
-        default="custom",
-        help='Source provider label in session_meta payload. Defaults to "custom".',
+        action="append",
+        default=[],
+        help=(
+            "Source provider label in session_meta payload. Can be passed "
+            'multiple times. Defaults to "custom" unless --other-providers is used.'
+        ),
     )
     parser.add_argument(
         "--target-provider",
         default="openai",
         help='Target provider label in session_meta payload. Defaults to "openai".',
+    )
+    parser.add_argument(
+        "--other-providers",
+        action="store_true",
+        help=(
+            "Clone sessions from every provider label except --target-provider. "
+            "Useful when the same workspace history is split across multiple vendors."
+        ),
     )
     parser.add_argument(
         "--session-id",
@@ -73,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Clone every session that matches --source-provider.",
+        help="Clone every session that matches the selected source provider filter.",
     )
     parser.add_argument(
         "--dry-run",
@@ -140,9 +152,23 @@ def build_existing_clone_index(sessions_dir: Path) -> dict[tuple[str, str], Sess
     return index
 
 
+def session_matches_source_selection(
+    *,
+    model_provider: str,
+    source_providers: set[str],
+    target_provider: str,
+    other_providers: bool,
+) -> bool:
+    if other_providers:
+        return model_provider != target_provider
+    return model_provider in source_providers
+
+
 def select_sources(
     sessions_dir: Path,
-    source_provider: str,
+    source_providers: set[str],
+    target_provider: str,
+    other_providers: bool,
     requested_ids: set[str],
     cwd_filters: set[str] | None,
 ) -> list[SessionMeta]:
@@ -151,7 +177,12 @@ def select_sources(
         meta = load_session_meta(path)
         if meta is None:
             continue
-        if meta.model_provider != source_provider:
+        if not session_matches_source_selection(
+            model_provider=meta.model_provider,
+            source_providers=source_providers,
+            target_provider=target_provider,
+            other_providers=other_providers,
+        ):
             continue
         if requested_ids and meta.session_id not in requested_ids:
             continue
@@ -223,23 +254,43 @@ def materialize_clone(plan: ClonePlan, target_provider: str, dry_run: bool) -> N
         target_handle.writelines(lines)
 
 
+def describe_source_selection(
+    source_providers: set[str],
+    other_providers: bool,
+) -> str:
+    if other_providers:
+        return "other-providers"
+    return ",".join(sorted(source_providers))
+
+
 def main() -> int:
     args = parse_args()
     sessions_dir = args.sessions_dir.expanduser().resolve()
     requested_ids = set(args.session_id)
     cwd_filters = {normalize_cwd(value) for value in args.cwd} or None
+    explicit_source_providers = set(args.source_provider)
+
+    if args.other_providers and explicit_source_providers:
+        raise SystemExit("Use --other-providers or --source-provider, not both.")
+
+    source_providers = explicit_source_providers or (
+        set() if args.other_providers else {"custom"}
+    )
+    source_selector = describe_source_selection(source_providers, args.other_providers)
 
     if not args.all and not requested_ids and cwd_filters is None:
         raise SystemExit("Pass --session-id <uuid>, --cwd <path>, or use --all.")
-    if args.source_provider == args.target_provider:
-        raise SystemExit("--source-provider and --target-provider must be different.")
+    if args.other_providers is False and args.target_provider in source_providers:
+        raise SystemExit("--source-provider values must differ from --target-provider.")
     if not sessions_dir.exists():
         raise SystemExit(f"Sessions directory does not exist: {sessions_dir}")
 
     existing_clones = build_existing_clone_index(sessions_dir)
     sources = select_sources(
         sessions_dir=sessions_dir,
-        source_provider=args.source_provider,
+        source_providers=source_providers,
+        target_provider=args.target_provider,
+        other_providers=args.other_providers,
         requested_ids=requested_ids,
         cwd_filters=cwd_filters,
     )
@@ -248,7 +299,12 @@ def main() -> int:
         found_ids = {source.session_id for source in sources}
         missing_ids = sorted(requested_ids - found_ids)
         for missing_id in missing_ids:
-            print(f"[warn] session id not found under provider {args.source_provider}: {missing_id}")
+            print(
+                "[warn] session id not found under provider selector "
+                + source_selector
+                + ": "
+                + missing_id
+            )
 
     if not sources:
         print("No matching source sessions found.")
@@ -276,8 +332,8 @@ def main() -> int:
             if cwd_filters is not None and len(cwd_filters) > 1
             else ""
         )
-        + " source_provider="
-        + args.source_provider
+        + " source_selector="
+        + source_selector
         + " target_provider="
         + args.target_provider
         + " matched="

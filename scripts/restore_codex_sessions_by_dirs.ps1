@@ -7,6 +7,8 @@ param(
 
     [string]$TargetProvider = "openai",
 
+    [switch]$OtherProviders,
+
     [switch]$DryRun,
 
     [switch]$StopOnError
@@ -41,9 +43,15 @@ foreach ($dir in $resolvedDirs) {
     $args = @(
         $cloneScript,
         "--cwd", $dir,
-        "--source-provider", $SourceProvider,
         "--target-provider", $TargetProvider
     )
+    if ($OtherProviders) {
+        $args += "--other-providers"
+    }
+    else {
+        $args += "--source-provider"
+        $args += $SourceProvider
+    }
     if ($DryRun) {
         $args += "--dry-run"
     }
